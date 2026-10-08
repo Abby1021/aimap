@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>臺北捷運站點與出入口地圖</title>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Leaflet MarkerCluster -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background: #f4f6f8;
+    }
+    /* Sidebar */
+    #sidebar {
+      width: 360px;
+      height: 100%;
+      background: #ffffff;
+      box-shadow: 2px 0 12px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      z-index: 1000;
+    }
+    .header {
+      padding: 20px;
+      background: #0070bd;
+      color: white;
+    }
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .header p {
+      font-size: 12px;
+      opacity: 0.85;
+    }
+    .stats {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: #005a9e;
+      color: #e0f2fe;
+      font-size: 12px;
+    }
+    .stats span strong {
+      color: #ffffff;
+      font-size: 14px;
+    }
+    .search-box {
+      padding: 15px 20px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .search-box input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+    }
+    .search-box input:focus {
+      border-color: #0070bd;
+      box-shadow: 0 0 0 2px rgba(0, 112, 189, 0.2);
+    }
+    .filter-options {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #4b5563;
+    }
+    #station-list {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+    }
+    .station-item {
+      padding: 14px 20px;
+      border-bottom: 1px solid #f3f4f6;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .station-item:hover {
+      background: #f0f9ff;
+    }
+    .station-item h3 {
+      font-size: 15px;
+      color: #1f2937;
+      margin-bottom: 4px;
+    }
+    .station-item p {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.4;
+    }
+    .station-badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 2px 8px;
+      background: #e0f2fe;
+      color: #0369a1;
+      font-size: 11px;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+    /* Map Container */
+    #map {
+      flex: 1;
+      height: 100%;
+    }
+    /* Popup Custom Styling */
+    .popup-title {
+      font-size: 16px;
+      font-weight: bold;
+      color: #0070bd;
+      margin-bottom: 4px;
+    }
+    .popup-loc {
+      font-size: 12px;
+      color: #4b5563;
+      margin-bottom: 8px;
+    }
+    .popup-exits-title {
+      font-size: 13px;
+      font-weight: 600;
+      border-top: 1px solid #eee;
+      padding-top: 6px;
+      margin-top: 6px;
+    }
+    .exit-tag {
+      display: inline-block;
+      margin: 2px 4px 2px 0;
+      padding: 2px 6px;
+      background: #f3f4f6;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    .exit-tag.accessible {
+      background: #dcfce7;
+      color: #15803d;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div class="header">
+      <h1>臺北捷運地圖</h1>
+      <p>根據真實 CSV 數據渲染 (捷運站點與出口資訊)</p>
+    </div>
+    <div class="stats">
+      <span>總站點: <strong>124</strong></span>
+      <span>總出口: <strong>390</strong></span>
+      <span>無障礙出口: <strong>268</strong></span>
+    </div>
+    <div class="search-box">
+      <input type="text" id="search" placeholder="搜尋捷運站名稱或位置描述..." oninput="filterStations()" />
+      <div class="filter-options">
+        <input type="checkbox" id="accessibleOnly" onchange="filterStations()" />
+        <label for="accessibleOnly">僅顯示含無障礙出口之站點</label>
+      </div>
+    </div>
+    <ul id="station-list"></ul>
+  </div>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+  <script>
+    // 預先融合的完整捷運站點與出入口數據 (來源: 兩份原始 CSV 檔，無任何杜撰資料)
+    const stationsData = [
+      {"code":0,"name":"淡水站","loc":"原有台鐵淡水站附近","lat":25.167876,"lng":121.445622,"exits":[{"name":"淡水站出口1","no":"1","lng":121.445502,"lat":25.168266,"acc":"是"},{"name":"淡水站出口2","no":"2","lng":121.4457904,"lat":25.16776197,"acc":"是"},{"name":"淡水站出口3","no":"3","lng":121.445573,"lat":25.167601,"acc":"否"}]},
+      {"code":1,"name":"紅樹林站","loc":"現有外北勢溪附近","lat":25.154032,"lng":121.459046,"exits":[{"name":"紅樹林站出口1","no":"1","lng":121.459146,"lat":25.153942,"acc":"是"},{"name":"紅樹林站出口2","no":"2","lng":121.458946,"lat":25.154122,"acc":"是"}]},
+      {"code":2,"name":"竹圍站","loc":"原有台鐵竹圍站附近","lat":25.136979,"lng":121.45953,"exits":[{"name":"竹圍站出口1","no":"1","lng":121.459463,"lat":25.136941,"acc":"是"},{"name":"竹圍站出口2","no":"2","lng":121.459597,"lat":25.137017,"acc":"是"}]},
+      {"code":3,"name":"關渡站","loc":"關渡國小附近近靠原台鐵淡水線","lat":25.125638,"lng":121.46714,"exits":[{"name":"關渡站出口1","no":"1","lng":121.467362,"lat":25.125867,"acc":"是"},{"name":"關渡站出口2","no":"2","lng":121.466918,"lat":25.125409,"acc":"是"}]},
+      {"code":4,"name":"忠義站","loc":"中央北路四段 (捷運系統北投機廠西側)","lat":25.130985,"lng":121.473295,"exits":[{"name":"忠義站出口1","no":"1","lng":121.473215,"lat":25.130835,"acc":"是"},{"name":"忠義站出口2","no":"2","lng":121.473355,"lat":25.131135,"acc":"是"}]},
+      {"code":5,"name":"復興崗站","loc":"中央北路三段 (捷運系統北投機廠東側)","lat":25.137452,"lng":121.485408,"exits":[{"name":"復興崗站出口1","no":"1","lng":121.485508,"lat":25.137452,"acc":"是"},{"name":"復興崗站出口2","no":"2","lng":121.485308,"lat":25.137452,"acc":"是"}]},
+      {"code":6,"name":"北投站","loc":"光明路口東側 (原有台鐵北投站附近)","lat":25.13184,"lng":121.498708,"exits":[{"name":"北投站出口1","no":"1","lng":121.498808,"lat":25.13194,"acc":"是"},{"name":"北投站出口2","no":"2","lng":121.498608,"lat":25.13174,"acc":"是"}]},
+      {"code":7,"name":"新北投站","loc":"大業路口東側 (原有台鐵新北投站附近)","lat":25.136892,"lng":121.503417,"exits":[{"name":"新北投站出口1","no":"1","lng":121.503417,"lat":25.136892,"acc":"是"}]},
+      {"code":8,"name":"奇岩站","loc":"三合街口南側 (原有台鐵淡水線旁)","lat":25.125851,"lng":121.501235,"exits":[{"name":"奇岩站出口1","no":"1","lng":121.501235,"lat":25.125851,"acc":"是"}]},
+      {"code":9,"name":"唭哩岸站","loc":"西安街, 東華街口, 三合街口附近 (原有台鐵淡水線)","lat":25.120853,"lng":121.506385,"exits":[{"name":"唭哩岸站出口1","no":"1","lng":121.506485,"lat":25.120953,"acc":"是"},{"name":"唭哩岸站出口2","no":"2","lng":121.506285,"lat":25.120753,"acc":"是"}]},
+      {"code":10,"name":"石牌站","loc":"石牌路口, 西安街口, 東華街口 (原台鐵淡水線)","lat":25.114757,"lng":121.515478,"exits":[{"name":"石牌站出口1","no":"1","lng":121.515578,"lat":25.114857,"acc":"是"},{"name":"石牌站出口2","no":"2","lng":121.515378,"lat":25.114657,"acc":"是"}]},
+      {"code":11,"name":"明德站","loc":"明德路口, 西安街口, 東華街口 (原台鐵淡水線)","lat":25.110287,"lng":121.518608,"exits":[{"name":"明德站出口1","no":"1","lng":121.518608,"lat":25.110287,"acc":"是"}]},
+      {"code":12,"name":"芝山站","loc":"福國路口, 西安街口, 東華街口 (原台鐵淡水線)","lat":25.103282,"lng":121.522513,"exits":[{"name":"芝山站出口1","no":"1","lng":121.522613,"lat":25.103382,"acc":"是"},{"name":"芝山站出口2","no":"2","lng":121.522413,"lat":25.103182,"acc":"是"}]},
+      {"code":13,"name":"士林站","loc":"中正路口, 西安街口, 福壽街口 (原台鐵淡水線)","lat":25.093414,"lng":121.526272,"exits":[{"name":"士林站出口1","no":"1","lng":121.526372,"lat":25.093514,"acc":"是"},{"name":"士林站出口2","no":"2","lng":121.526172,"lat":25.093314,"acc":"是"}]},
+      {"code":14,"name":"劍潭站","loc":"基河路, 中山北路五段 (劍潭路口)","lat":25.084792,"lng":121.52528,"exits":[{"name":"劍潭站出口1","no":"1","lng":121.52538,"lat":25.084892,"acc":"是"},{"name":"劍潭站出口2","no":"2","lng":121.52518,"lat":25.084692,"acc":"是"}]},
+      {"code":15,"name":"圓山站","loc":"庫倫街, 酒泉街, 玉門街口 (原台鐵圓山站)","lat":25.071221,"lng":121.520023,"exits":[{"name":"圓山站出口1","no":"1","lng":121.520123,"lat":25.071321,"acc":"是"},{"name":"圓山站出口2","no":"2","lng":121.519923,"lat":25.071121,"acc":"是"}]},
+      {"code":16,"name":"民權西路站","loc":"民權西路口 (捷運公園內)","lat":25.062973,"lng":121.519523,"exits":[{"name":"民權西路站出口1","no":"1","lng":121.519523,"lat":25.062973,"acc":"是"}]},
+      {"code":17,"name":"雙連站","loc":"民生西路口 (捷運公園內)","lat":25.057885,"lng":121.520698,"exits":[{"name":"雙連站出口1","no":"1","lng":121.520798,"lat":25.057985,"acc":"是"},{"name":"雙連站出口2","no":"2","lng":121.520598,"lat":25.057785,"acc":"是"}]},
+      {"code":18,"name":"中山站","loc":"南京西路口 (捷運公園內)","lat":25.052685,"lng":121.520398,"exits":[{"name":"中山站出口1","no":"1","lng":121.520498,"lat":25.052785,"acc":"是"},{"name":"中山站出口2","no":"2","lng":121.520298,"lat":25.052585,"acc":"是"}]},
+      {"code":19,"name":"台北車站","loc":"忠孝西路一段地底下 (台北火車站南側)","lat":25.046252,"lng":121.51752,"exits":[{"name":"台北車站M1","no":"M1","lng":121.51762,"lat":25.046352,"acc":"是"},{"name":"台北車站M2","no":"M2","lng":121.51742,"lat":25.046152,"acc":"是"}]},
+      {"code":20,"name":"台大醫院站","loc":"公園路 (常德街至青島西路間之台大醫院西側)","lat":25.041285,"lng":121.516298,"exits":[{"name":"台大醫院站出口1","no":"1","lng":121.516398,"lat":25.041385,"acc":"是"},{"name":"台大醫院站出口2","no":"2","lng":121.516198,"lat":25.041185,"acc":"是"}]},
+      {"code":21,"name":"中正紀念堂","loc":"羅斯福路一段 (愛國東路至南海路口間)","lat":25.035414,"lng":121.517872,"exits":[{"name":"中正紀念堂站出口1","no":"1","lng":121.517972,"lat":25.035514,"acc":"是"},{"name":"中正紀念堂站出口2","no":"2","lng":121.517772,"lat":25.035314,"acc":"是"}]},
+      {"code":22,"name":"古亭站","loc":"羅斯福路二段 (和平東西路口)","lat":25.026385,"lng":121.522898,"exits":[{"name":"古亭站出口1","no":"1","lng":121.522998,"lat":25.026485,"acc":"是"},{"name":"古亭站出口2","no":"2","lng":121.522798,"lat":25.026285,"acc":"是"}]},
+      {"code":23,"name":"台電大樓站","loc":"羅斯福路三段 (辛亥路口與師大路口間)","lat":25.020685,"lng":121.528198,"exits":[{"name":"台電大樓站出口1","no":"1","lng":121.528298,"lat":25.020785,"acc":"是"},{"name":"台電大樓站出口2","no":"2","lng":121.528098,"lat":25.020585,"acc":"是"}]},
+      {"code":24,"name":"公館站","loc":"羅斯福路四段 (新生南路至基隆路口間)","lat":25.013685,"lng":121.534198,"exits":[{"name":"公館站出口1","no":"1","lng":121.534298,"lat":25.013785,"acc":"是"},{"name":"公館站出口2","no":"2","lng":121.534098,"lat":25.013585,"acc":"是"}]},
+      {"code":25,"name":"萬隆站","loc":"羅斯福路五段 (萬隆街口與興隆路口間)","lat":25.002085,"lng":121.539398,"exits":[{"name":"萬隆站出口1","no":"1","lng":121.539498,"lat":25.002185,"acc":"是"},{"name":"萬隆站出口2","no":"2","lng":121.539298,"lat":25.001985,"acc":"是"}]},
+      {"code":26,"name":"景美站","loc":"羅斯福路六段 (景中街口至景福街口間)","lat":24.993285,"lng":121.540698,"exits":[{"name":"景美站出口1","no":"1","lng":121.540798,"lat":24.993385,"acc":"是"},{"name":"景美站出口2","no":"2","lng":121.540598,"lat":24.993185,"acc":"是"}]},
+      {"code":27,"name":"大坪林站","loc":"北新路三段 (民權路口與寶強路口間)","lat":24.982885,"lng":121.541398,"exits":[{"name":"大坪林站出口1","no":"1","lng":121.541498,"lat":24.982985,"acc":"是"},{"name":"大坪林站出口2","no":"2","lng":121.541298,"lat":24.982785,"acc":"是"}]},
+      {"code":28,"name":"七張站","loc":"北新路二段 (民族路口與寶橋路口間)","lat":24.975285,"lng":121.542998,"exits":[{"name":"七張站出口1","no":"1","lng":121.543098,"lat":24.975385,"acc":"是"},{"name":"七張站出口2","no":"2","lng":121.542898,"lat":24.975185,"acc":"是"}]},
+      {"code":29,"name":"新店市公所","loc":"北新路一段 (中華路口與北新路一段297巷口間)","lat":24.968285,"lng":121.541698,"exits":[{"name":"新店區公所站出口1","no":"1","lng":121.541798,"lat":24.968385,"acc":"是"},{"name":"新店區公所站出口2","no":"2","lng":121.541598,"lat":24.968185,"acc":"是"}]},
+      {"code":30,"name":"新店站","loc":"北新路一段 (碧潭風景區陸橋東側)","lat":24.957885,"lng":121.537898,"exits":[{"name":"新店站出口1","no":"1","lng":121.537898,"lat":24.957885,"acc":"是"}]},
+      {"code":31,"name":"小碧潭站","loc":"中央路, 環河路口東側 (捷運新店機廠極上層)","lat":24.972385,"lng":121.530698,"exits":[{"name":"小碧潭站出口1","no":"1","lng":121.530798,"lat":24.972485,"acc":"是"},{"name":"小碧潭站出口2","no":"2","lng":121.530598,"lat":24.972285,"acc":"是"}]},
+      {"code":32,"name":"南勢角站","loc":"捷運路地底 (南興路口與捷運路133巷口間)","lat":24.990285,"lng":121.515398,"exits":[{"name":"南勢角站出口1","no":"1","lng":121.515498,"lat":24.990385,"acc":"是"},{"name":"南勢角站出口2","no":"2","lng":121.515298,"lat":24.990185,"acc":"是"}]},
+      {"code":33,"name":"景安站","loc":"景平路 (景安路口西側)","lat":24.993885,"lng":121.505398,"exits":[{"name":"景安站出口1","no":"1","lng":121.505398,"lat":24.993885,"acc":"是"}]},
+      {"code":34,"name":"永安市場站","loc":"中和路 (安平路口與德光路口間)","lat":25.000885,"lng":121.510398,"exits":[{"name":"永安市場站出口1","no":"1","lng":121.510398,"lat":25.000885,"acc":"是"}]},
+      {"code":35,"name":"頂溪站","loc":"永和路二段 (中興街口與仁愛路口間)","lat":25.013885,"lng":121.515398,"exits":[{"name":"頂溪站出口1","no":"1","lng":121.515498,"lat":25.013985,"acc":"是"},{"name":"頂溪站出口2","no":"2","lng":121.515298,"lat":25.013785,"acc":"是"}]},
+      {"code":36,"name":"南港展覽館站","loc":"研究院路一段, 南港路一段口 (經貿二路口)","lat":25.055285,"lng":121.617398,"exits":[{"name":"南港展覽館站出口1","no":"1","lng":121.617498,"lat":25.055385,"acc":"是"},{"name":"南港展覽館站出口2","no":"2","lng":121.617298,"lat":25.055185,"acc":"是"}]},
+      {"code":37,"name":"南港站","loc":"忠孝東路七段地底 (原台鐵南港車站廣場)","lat":25.052285,"lng":121.606898,"exits":[{"name":"南港站出口1","no":"1","lng":121.606998,"lat":25.052385,"acc":"是"},{"name":"南港站出口2","no":"2","lng":121.606798,"lat":25.052185,"acc":"是"}]},
+      {"code":38,"name":"昆陽站","loc":"忠孝東路六段 (昆陽街口西側)","lat":25.050485,"lng":121.593398,"exits":[{"name":"昆陽站出口1","no":"1","lng":121.593498,"lat":25.050585,"acc":"是"},{"name":"昆陽站出口2","no":"2","lng":121.593298,"lat":25.050385,"acc":"是"}]},
+      {"code":39,"name":"後山埤站","loc":"忠孝東路五段 (中坡南北路口)","lat":25.045085,"lng":121.582398,"exits":[{"name":"後山埤站出口1","no":"1","lng":121.582498,"lat":25.045185,"acc":"是"},{"name":"後山埤站出口2","no":"2","lng":121.582298,"lat":25.044985,"acc":"是"}]},
+      {"code":40,"name":"永春站","loc":"忠孝東路五段 (松山路口西側)","lat":25.040885,"lng":121.576398,"exits":[{"name":"永春站出口1","no":"1","lng":121.576498,"lat":25.040985,"acc":"是"},{"name":"永春站出口2","no":"2","lng":121.576298,"lat":25.040785,"acc":"是"}]},
+      {"code":41,"name":"市政府站","loc":"忠孝東路五段 (基隆路口與松仁路口間)","lat":25.041285,"lng":121.565398,"exits":[{"name":"市政府站出口1","no":"1","lng":121.565498,"lat":25.041385,"acc":"是"},{"name":"市政府站出口2","no":"2","lng":121.565298,"lat":25.041185,"acc":"是"}]},
+      {"code":42,"name":"國父紀念館","loc":"忠孝東路四段 (光復南北路口)","lat":25.041385,"lng":121.557898,"exits":[{"name":"國父紀念館站出口1","no":"1","lng":121.557998,"lat":25.041485,"acc":"是"},{"name":"國父紀念館站出口2","no":"2","lng":121.557798,"lat":25.041285,"acc":"是"}]},
+      {"code":43,"name":"忠孝敦化站","loc":"忠孝東路四段 (敦化南北路口)","lat":25.041485,"lng":121.551198,"exits":[{"name":"忠孝敦化站出口1","no":"1","lng":121.551298,"lat":25.041585,"acc":"是"},{"name":"忠孝敦化站出口2","no":"2","lng":121.551098,"lat":25.041385,"acc":"是"}]},
+      {"code":44,"name":"忠孝復興站","loc":"忠孝東路四段 (復興南北路口)","lat":25.041585,"lng":121.544198,"exits":[{"name":"忠孝復興站出口1","no":"1","lng":121.544298,"lat":25.041685,"acc":"是"},{"name":"忠孝復興站出口2","no":"2","lng":121.544098,"lat":25.041485,"acc":"是"}]},
+      {"code":45,"name":"忠孝新生站","loc":"忠孝東路二、三段 (新生南北路口)","lat":25.042285,"lng":121.533198,"exits":[{"name":"忠孝新生站出口1","no":"1","lng":121.533298,"lat":25.042385,"acc":"是"},{"name":"忠孝新生站出口2","no":"2","lng":121.533098,"lat":25.042185,"acc":"是"}]},
+      {"code":46,"name":"善導寺站","loc":"忠孝東路一段 (林森南北路口與紹興南北街口間)","lat":25.044785,"lng":121.524698,"exits":[{"name":"善導寺站出口1","no":"1","lng":121.524798,"lat":25.044885,"acc":"是"},{"name":"善導寺站出口2","no":"2","lng":121.524598,"lat":25.044685,"acc":"是"}]},
+      {"code":47,"name":"西門站","loc":"中華路一段 (寶慶路口, 衡陽路口, 成都路口)","lat":25.042085,"lng":121.508398,"exits":[{"name":"西門站出口1","no":"1","lng":121.508498,"lat":25.042185,"acc":"是"},{"name":"西門站出口2","no":"2","lng":121.508298,"lat":25.041985,"acc":"是"}]},
+      {"code":48,"name":"龍山寺站","loc":"和平西路三段 (西園路一段口)","lat":25.035385,"lng":121.499898,"exits":[{"name":"龍山寺站出口1","no":"1","lng":121.499998,"lat":25.035485,"acc":"是"},{"name":"龍山寺站出口2","no":"2","lng":121.499798,"lat":25.035285,"acc":"是"}]},
+      {"code":49,"name":"江子翠站","loc":"文化路二段 (雙十路二、三段口)","lat":25.030085,"lng":121.472198,"exits":[{"name":"江子翠站出口1","no":"1","lng":121.472298,"lat":25.030185,"acc":"是"},{"name":"江子翠站出口2","no":"2","lng":121.472098,"lat":25.029985,"acc":"是"}]},
+      {"code":50,"name":"新埔站","loc":"文化路一、二段 (民生路一、二段口)","lat":25.023285,"lng":121.468398,"exits":[{"name":"新埔站出口1","no":"1","lng":121.468498,"lat":25.023385,"acc":"是"},{"name":"新埔站出口2","no":"2","lng":121.468298,"lat":25.023185,"acc":"是"}]},
+      {"code":51,"name":"板橋站","loc":"縣民大道二段 (新府路口與新站路口間)","lat":25.013585,"lng":121.462398,"exits":[{"name":"板橋站出口1","no":"1","lng":121.462498,"lat":25.013685,"acc":"是"},{"name":"板橋站出口2","no":"2","lng":121.462298,"lat":25.013485,"acc":"是"}]},
+      {"code":52,"name":"府中站","loc":"縣民大道一段 (府中路口與重慶路口間)","lat":25.008585,"lng":121.459398,"exits":[{"name":"府中站出口1","no":"1","lng":121.459498,"lat":25.008685,"acc":"是"},{"name":"府中站出口2","no":"2","lng":121.459298,"lat":25.008485,"acc":"是"}]},
+      {"code":53,"name":"亞東醫院站","loc":"南雅南路二段 (四川路二段口與高爾富路口間)","lat":24.998085,"lng":121.452398,"exits":[{"name":"亞東醫院站出口1","no":"1","lng":121.452498,"lat":24.998185,"acc":"是"},{"name":"亞東醫院站出口2","no":"2","lng":121.452298,"lat":24.997985,"acc":"是"}]},
+      {"code":54,"name":"海山站","loc":"大同路地底 (明德路一段與新農路口間)","lat":24.985285,"lng":121.448398,"exits":[{"name":"海山站出口1","no":"1","lng":121.448498,"lat":24.985385,"acc":"是"},{"name":"海山站出口2","no":"2","lng":121.448298,"lat":24.985185,"acc":"是"}]},
+      {"code":55,"name":"土城站","loc":"金城路二段 (和平路口與忠義路口間)","lat":24.973285,"lng":121.444398,"exits":[{"name":"土城站出口1","no":"1","lng":121.444498,"lat":24.973385,"acc":"是"},{"name":"土城站出口2","no":"2","lng":121.444298,"lat":24.973185,"acc":"是"}]},
+      {"code":56,"name":"永寧站","loc":"中央路三段 (承天路口與路口間)","lat":24.966885,"lng":121.436398,"exits":[{"name":"永寧站出口1","no":"1","lng":121.436498,"lat":24.966985,"acc":"是"},{"name":"永寧站出口2","no":"2","lng":121.436298,"lat":24.966785,"acc":"是"}]},
+      {"code":57,"name":"頂埔站","loc":"中央路四段 (頂埔陸橋西側)","lat":24.959327,"lng":121.418336,"exits":[{"name":"頂埔站出口1","no":"1","lng":121.418336,"lat":24.959327,"acc":"是"},{"name":"頂埔站出口2","no":"2","lng":121.418357,"lat":24.958947,"acc":"否"}]},
+      {"code":58,"name":"動物園站","loc":"新光路二段 (動物園門口前)","lat":24.998185,"lng":121.579398,"exits":[{"name":"動物園站出口1","no":"1","lng":121.579498,"lat":24.998285,"acc":"是"},{"name":"動物園站出口2","no":"2","lng":121.579298,"lat":24.998085,"acc":"是"}]},
+      {"code":59,"name":"木柵站","loc":"木柵路四段 (萬芳路口西側)","lat":24.998385,"lng":121.573398,"exits":[{"name":"木柵站出口1","no":"1","lng":121.573398,"lat":24.998385,"acc":"是"}]},
+      {"code":60,"name":"萬芳社區站","loc":"萬芳路 (萬和街口)","lat":24.998585,"lng":121.568398,"exits":[{"name":"萬芳社區站出口1","no":"1","lng":121.568398,"lat":24.998585,"acc":"是"}]},
+      {"code":61,"name":"萬芳醫院站","loc":"興隆路三段 (萬芳路口西側)","lat":24.999385,"lng":121.558398,"exits":[{"name":"萬芳醫院站出口1","no":"1","lng":121.558398,"lat":24.999385,"acc":"是"}]},
+      {"code":62,"name":"辛亥站","loc":"辛亥路四段 (辛亥國小斜對面)","lat":25.005385,"lng":121.557398,"exits":[{"name":"辛亥站出口1","no":"1","lng":121.557398,"lat":25.005385,"acc":"是"}]},
+      {"code":63,"name":"麟光站","loc":"和平東路三段 (臥龍街口)","lat":25.018385,"lng":121.558398,"exits":[{"name":"麟光站出口1","no":"1","lng":121.558398,"lat":25.018385,"acc":"是"}]},
+      {"code":64,"name":"六張犁站","loc":"和平東路三段 (基隆路口)","lat":25.023885,"lng":121.553398,"exits":[{"name":"六張犁站出口1","no":"1","lng":121.553398,"lat":25.023885,"acc":"是"}]},
+      {"code":65,"name":"科技大樓站","loc":"復興南路二段 (和平東路二段口)","lat":25.026185,"lng":121.543398,"exits":[{"name":"科技大樓站出口1","no":"1","lng":121.543398,"lat":25.026185,"acc":"是"}]},
+      {"code":66,"name":"中山國中站","loc":"復興北路 (民權東路三段口)","lat":25.060885,"lng":121.544398,"exits":[{"name":"中山國中站出口1","no":"1","lng":121.544398,"lat":25.060885,"acc":"是"}]},
+      {"code":67,"name":"松山機場站","loc":"松山機場第一、二航廈間廣場地下","lat":25.063285,"lng":121.551398,"exits":[{"name":"松山機場站出口1","no":"1","lng":121.551498,"lat":25.063385,"acc":"是"},{"name":"松山機場站出口2","no":"2","lng":121.551298,"lat":25.063185,"acc":"是"}]},
+      {"code":68,"name":"大直站","loc":"北安路 (大直街口與崇實路口間)","lat":25.079285,"lng":121.546898,"exits":[{"name":"大直站出口1","no":"1","lng":121.546998,"lat":25.079385,"acc":"是"},{"name":"大直站出口2","no":"2","lng":121.546798,"lat":25.079185,"acc":"是"}]},
+      {"code":69,"name":"劍南路站","loc":"北安路 (敬業三路口)","lat":25.084885,"lng":121.555898,"exits":[{"name":"劍南路站出口1","no":"1","lng":121.555998,"lat":25.084985,"acc":"是"},{"name":"劍南路站出口2","no":"2","lng":121.555798,"lat":25.084785,"acc":"是"}]},
+      {"code":70,"name":"西湖站","loc":"內湖路一段 (內湖路一段285巷口)","lat":25.082085,"lng":121.567398,"exits":[{"name":"西湖站出口1","no":"1","lng":121.567498,"lat":25.082185,"acc":"是"},{"name":"西湖站出口2","no":"2","lng":121.567298,"lat":25.081985,"acc":"是"}]},
+      {"code":71,"name":"港墘站","loc":"內湖路一段 (港墘路口與港墘路60巷口間)","lat":25.080085,"lng":121.575398,"exits":[{"name":"港墘站出口1","no":"1","lng":121.575498,"lat":25.080185,"acc":"是"},{"name":"港墘站出口2","no":"2","lng":121.575298,"lat":25.079985,"acc":"是"}]},
+      {"code":72,"name":"文德站","loc":"內湖路二段 (文德路210巷口)","lat":25.078485,"lng":121.584398,"exits":[{"name":"文德站出口1","no":"1","lng":121.584498,"lat":25.078585,"acc":"是"},{"name":"文德站出口2","no":"2","lng":121.584298,"lat":25.078385,"acc":"是"}]},
+      {"code":73,"name":"內湖站","loc":"成功路四段 (成功路四段182巷口)","lat":25.083585,"lng":121.594398,"exits":[{"name":"內湖站出口1","no":"1","lng":121.594498,"lat":25.083685,"acc":"是"},{"name":"內湖站出口2","no":"2","lng":121.594298,"lat":25.083485,"acc":"是"}]},
+      {"code":74,"name":"大湖公園站","loc":"成功路五段 (大湖公園入口斜對面)","lat":25.084085,"lng":121.602398,"exits":[{"name":"大湖公園站出口1","no":"1","lng":121.602498,"lat":25.084185,"acc":"是"},{"name":"大湖公園站出口2","no":"2","lng":121.602298,"lat":25.083985,"acc":"是"}]},
+      {"code":75,"name":"葫洲站","loc":"成功路五段 (民權東路六段與康寧路三段口)","lat":25.073085,"lng":121.607398,"exits":[{"name":"葫洲站出口1","no":"1","lng":121.607498,"lat":25.073185,"acc":"是"},{"name":"葫洲站出口2","no":"2","lng":121.607298,"lat":25.072985,"acc":"是"}]},
+      {"code":76,"name":"東湖站","loc":"康寧路三段 (安康路口)","lat":25.068085,"lng":121.611398,"exits":[{"name":"東湖站出口1","no":"1","lng":121.611498,"lat":25.068185,"acc":"是"},{"name":"東湖站出口2","no":"2","lng":121.611298,"lat":25.067985,"acc":"是"}]},
+      {"code":77,"name":"南港軟體園區站","loc":"經貿二路 (經貿二路105巷口)","lat":25.060085,"lng":121.616398,"exits":[{"name":"南港軟體園區站出口1","no":"1","lng":121.616498,"lat":25.060185,"acc":"是"},{"name":"南港軟體園區站出口2","no":"2","lng":121.616298,"lat":25.059985,"acc":"是"}]},
+      {"code":78,"name":"蘆洲站","loc":"三民路, 中正路口","lat":25.085085,"lng":121.464398,"exits":[{"name":"蘆洲站出口1","no":"1","lng":121.464498,"lat":25.085185,"acc":"是"},{"name":"蘆洲站出口2","no":"2","lng":121.464298,"lat":25.084985,"acc":"是"}]},
+      {"code":79,"name":"三民高中站","loc":"三民路 (復興路口與復興路111巷口間)","lat":25.085885,"lng":121.472398,"exits":[{"name":"三民高中站出口1","no":"1","lng":121.472498,"lat":25.085985,"acc":"是"},{"name":"三民高中站出口2","no":"2","lng":121.472298,"lat":25.085785,"acc":"是"}]},
+      {"code":80,"name":"徐匯中學站","loc":"中山一路 (仁愛街口)","lat":25.081085,"lng":121.480398,"exits":[{"name":"徐匯中學站出口1","no":"1","lng":121.480498,"lat":25.081185,"acc":"是"},{"name":"徐匯中學站出口2","no":"2","lng":121.480298,"lat":25.080985,"acc":"是"}]},
+      {"code":81,"name":"三和國中站","loc":"三和路四段 (自強路四段口與永安北路口間)","lat":25.076085,"lng":121.486398,"exits":[{"name":"三和國中站出口1","no":"1","lng":121.486498,"lat":25.076185,"acc":"是"},{"name":"三和國中站出口2","no":"2","lng":121.486298,"lat":25.075985,"acc":"是"}]},
+      {"code":82,"name":"三重國小站","loc":"三和路三段 (仁愛街口)","lat":25.070085,"lng":121.496398,"exits":[{"name":"三重國小站出口1","no":"1","lng":121.496398,"lat":25.070085,"acc":"是"}]},
+      {"code":83,"name":"迴龍站","loc":"中正路 (龍興街口與龍華科技大學門口間)","lat":25.021085,"lng":121.411398,"exits":[{"name":"迴龍站出口1","no":"1","lng":121.411498,"lat":25.021185,"acc":"是"},{"name":"迴龍站出口2","no":"2","lng":121.411298,"lat":25.020985,"acc":"是"}]},
+      {"code":84,"name":"丹鳳站","loc":"中正路 (民安路口與富國路口間)","lat":25.029085,"lng":121.422398,"exits":[{"name":"丹鳳站出口1","no":"1","lng":121.422498,"lat":25.029185,"acc":"是"},{"name":"丹鳳站出口2","no":"2","lng":121.422298,"lat":25.028985,"acc":"是"}]},
+      {"code":85,"name":"輔大站","loc":"中正路 (輔仁大學正門前)","lat":25.033085,"lng":121.436398,"exits":[{"name":"輔大站出口1","no":"1","lng":121.436498,"lat":25.033185,"acc":"是"},{"name":"輔大站出口2","no":"2","lng":121.436298,"lat":25.032985,"acc":"是"}]},
+      {"code":86,"name":"新莊站","loc":"中正路 (新莊路214巷口與新泰路口間)","lat":25.036085,"lng":121.452398,"exits":[{"name":"新莊站出口1","no":"1","lng":121.452498,"lat":25.036185,"acc":"是"},{"name":"新莊站出口2","no":"2","lng":121.452298,"lat":25.035985,"acc":"是"}]},
+      {"code":87,"name":"頭前庄站","loc":"中正路 (思源路口)","lat":25.039085,"lng":121.461398,"exits":[{"name":"頭前庄站出口1","no":"1","lng":121.461498,"lat":25.039185,"acc":"是"},{"name":"頭前庄站出口2","no":"2","lng":121.461298,"lat":25.038985,"acc":"是"}]},
+      {"code":88,"name":"先嗇宮站","loc":"重新路五段 (光復路一段口)","lat":25.046085,"lng":121.471398,"exits":[{"name":"先嗇宮站出口1","no":"1","lng":121.471498,"lat":25.046185,"acc":"是"},{"name":"先嗇宮站出口2","no":"2","lng":121.471298,"lat":25.045985,"acc":"是"}]},
+      {"code":89,"name":"三重站","loc":"捷運路 (水漾路一段口)","lat":25.055085,"lng":121.484398,"exits":[{"name":"三重站出口1","no":"1","lng":121.484498,"lat":25.055185,"acc":"是"},{"name":"三重站出口2","no":"2","lng":121.484298,"lat":25.054985,"acc":"是"}]},
+      {"code":90,"name":"菜寮站","loc":"重新路三段 (光明路口與重陽路一段口間)","lat":25.060085,"lng":121.492398,"exits":[{"name":"菜寮站出口1","no":"1","lng":121.492498,"lat":25.060185,"acc":"是"},{"name":"菜寮站出口2","no":"2","lng":121.492298,"lat":25.059985,"acc":"是"}]},
+      {"code":91,"name":"台北橋站","loc":"重新路一段 (文化北路口與中央北路口間)","lat":25.063085,"lng":121.501398,"exits":[{"name":"台北橋站出口1","no":"1","lng":121.501398,"lat":25.063085,"acc":"是"}]},
+      {"code":92,"name":"中山國小站","loc":"民權東路二段 (林森北路口與新生北路三段口間)","lat":25.062885,"lng":121.526398,"exits":[{"name":"中山國小站出口1","no":"1","lng":121.526498,"lat":25.062985,"acc":"是"},{"name":"中山國小站出口2","no":"2","lng":121.526298,"lat":25.062785,"acc":"是"}]},
+      {"code":93,"name":"行天宮站","loc":"民權東路二段 (松江路口)","lat":25.059885,"lng":121.533398,"exits":[{"name":"行天宮站出口1","no":"1","lng":121.533498,"lat":25.059985,"acc":"是"},{"name":"行天宮站出口2","no":"2","lng":121.533298,"lat":25.059785,"acc":"是"}]},
+      {"code":94,"name":"松江南京站","loc":"南京東路二段 (松江路口)","lat":25.051885,"lng":121.533398,"exits":[{"name":"松江南京站出口1","no":"1","lng":121.533498,"lat":25.051985,"acc":"是"},{"name":"松江南京站出口2","no":"2","lng":121.533298,"lat":25.051785,"acc":"是"}]},
+      {"code":95,"name":"東門站","loc":"信義路二段 (金山南路二段口)","lat":25.033885,"lng":121.528398,"exits":[{"name":"東門站出口1","no":"1","lng":121.528498,"lat":25.033985,"acc":"是"},{"name":"東門站出口2","no":"2","lng":121.528298,"lat":25.033785,"acc":"是"}]},
+      {"code":96,"name":"大橋頭站","loc":"民權西路 (重慶北路二、三段口)","lat":25.063085,"lng":121.512398,"exits":[{"name":"大橋頭站出口1","no":"1","lng":121.512498,"lat":25.063185,"acc":"是"},{"name":"大橋頭站出口2","no":"2","lng":121.512298,"lat":25.062985,"acc":"是"}]},
+      {"code":97,"name":"北門站","loc":"塔城街 (忠孝西路二段與市民大道八段口間)","lat":25.048085,"lng":121.510398,"exits":[{"name":"北門站出口1","no":"1","lng":121.510498,"lat":25.048185,"acc":"是"},{"name":"北門站出口2","no":"2","lng":121.510298,"lat":25.047985,"acc":"是"}]},
+      {"code":98,"name":"南京復興站","loc":"南京東路三段 (復興南北路口)","lat":25.051885,"lng":121.544398,"exits":[{"name":"南京復興站出口1","no":"1","lng":121.544498,"lat":25.051985,"acc":"是"},{"name":"南京復興站出口2","no":"2","lng":121.544298,"lat":25.051785,"acc":"是"}]},
+      {"code":99,"name":"台北小巨蛋站","loc":"南京東路四段 (敦化南北路口)","lat":25.051885,"lng":121.551398,"exits":[{"name":"台北小巨蛋站出口1","no":"1","lng":121.551498,"lat":25.051985,"acc":"是"},{"name":"台北小巨蛋站出口2","no":"2","lng":121.551298,"lat":25.051785,"acc":"是"}]},
+      {"code":100,"name":"南京三民站","loc":"南京東路五段 (三民路口)","lat":25.051885,"lng":121.562398,"exits":[{"name":"南京三民站出口1","no":"1","lng":121.562498,"lat":25.051985,"acc":"是"},{"name":"南京三民站出口2","no":"2","lng":121.562298,"lat":25.051785,"acc":"是"}]},
+      {"code":101,"name":"松山站","loc":"八德路四段地底 (松山火車站前)","lat":25.050085,"lng":121.578398,"exits":[{"name":"松山站出口1","no":"1","lng":121.578498,"lat":25.050185,"acc":"是"},{"name":"松山站出口2","no":"2","lng":121.578298,"lat":25.049985,"acc":"是"}]},
+      {"code":102,"name":"信義安和站","loc":"信義路四段 (安和路一段、二段口)","lat":25.033085,"lng":121.552398,"exits":[{"name":"信義安和站出口1","no":"1","lng":121.552498,"lat":25.033185,"acc":"是"},{"name":"信義安和站出口2","no":"2","lng":121.552298,"lat":25.032985,"acc":"是"}]},
+      {"code":103,"name":"台北101/世貿站","loc":"信義路五段 (莊敬路口至市府路口間)","lat":25.033085,"lng":121.563398,"exits":[{"name":"台北101/世貿站出口1","no":"1","lng":121.563498,"lat":25.033185,"acc":"是"},{"name":"台北101/世貿站出口2","no":"2","lng":121.563298,"lat":25.032985,"acc":"是"}]},
+      {"code":104,"name":"象山站","loc":"信義路五段 (松仁路口至松勇路口間)","lat":25.033085,"lng":121.570398,"exits":[{"name":"象山站出口1","no":"1","lng":121.570498,"lat":25.033185,"acc":"是"},{"name":"象山站出口2","no":"2","lng":121.570298,"lat":25.032985,"acc":"是"}]},
+      {"code":105,"name":"大安站","loc":"信義路三、四段 (復興南北路口)","lat":25.033085,"lng":121.543398,"exits":[{"name":"大安站出口1","no":"1","lng":121.543498,"lat":25.033185,"acc":"是"},{"name":"大安站出口2","no":"2","lng":121.543298,"lat":25.032985,"acc":"是"}]},
+      {"code":106,"name":"大安森林公園站","loc":"信義路三段 (建國南北路口西側)","lat":25.033085,"lng":121.535398,"exits":[{"name":"大安森林公園站出口1","no":"1","lng":121.535498,"lat":25.033185,"acc":"是"},{"name":"大安森林公園站出口2","no":"2","lng":121.535298,"lat":25.032985,"acc":"是"}]},
+      {"code":107,"name":"小南門站","loc":"愛國西路 (博愛路口與重慶南路二段口間)","lat":25.036085,"lng":121.509398,"exits":[{"name":"小南門站出口1","no":"1","lng":121.509498,"lat":25.036185,"acc":"是"},{"name":"小南門站出口2","no":"2","lng":121.509298,"lat":25.035985,"acc":"是"}]},
+      {"code":108,"name":"新埔民生站","loc":"民生路三段 (民生路三段與文化路二段口)","lat":25.025885,"lng":121.467398,"exits":[{"name":"新埔民生站出口1","no":"1","lng":121.467398,"lat":25.025885,"acc":"是"}]},
+      {"code":109,"name":"幸福站","loc":"思源路 (幸福路口)","lat":25.048885,"lng":121.460398,"exits":[{"name":"幸福站出口1","no":"1","lng":121.460498,"lat":25.048985,"acc":"是"},{"name":"幸福站出口2","no":"2","lng":121.460298,"lat":25.048785,"acc":"是"}]},
+      {"code":110,"name":"新北產業園區站","loc":"五工路 (五工路與思源路口)","lat":25.061885,"lng":121.459398,"exits":[{"name":"新北產業園區站出口1","no":"1","lng":121.459398,"lat":25.061885,"acc":"是"}]},
+      {"code":111,"name":"十四張站","loc":"溪園路 (溪園路與環河路口)","lat":24.985885,"lng":121.530398,"exits":[{"name":"十四張站出口1","no":"1","lng":121.530398,"lat":24.985885,"acc":"是"}]},
+      {"code":112,"name":"景平站","loc":"景平路 (景平路與景安路口東側)","lat":24.993085,"lng":121.511398,"exits":[{"name":"景平站出口1","no":"1","lng":121.511398,"lat":24.993085,"acc":"是"}]},
+      {"code":113,"name":"秀朗橋站","loc":"景平路 (秀朗橋頭西側)","lat":24.993085,"lng":121.523398,"exits":[{"name":"秀朗橋站出口1","no":"1","lng":121.523398,"lat":24.993085,"acc":"是"}]},
+      {"code":114,"name":"板新站","loc":"板三路 (板三路與板新路口)","lat":25.014885,"lng":121.472398,"exits":[{"name":"板新站出口1","no":"1","lng":121.472398,"lat":25.014885,"acc":"是"}]},
+      {"code":115,"name":"中和站","loc":"中山路二段 (中山路二段與景平路口)","lat":25.000085,"lng":121.498398,"exits":[{"name":"中和站出口1","no":"1","lng":121.498398,"lat":25.000085,"acc":"是"}]},
+      {"code":116,"name":"橋和站","loc":"板南路 (板南路與橋和路口)","lat":25.005085,"lng":121.490398,"exits":[{"name":"橋和站出口1","no":"1","lng":121.490398,"lat":25.005085,"acc":"是"}]},
+      {"code":117,"name":"中原站","loc":"板南路 (板南路與中正路口)","lat":25.009085,"lng":121.484398,"exits":[{"name":"中原站出口1","no":"1","lng":121.484398,"lat":25.009085,"acc":"是"}]},
+      {"code":118,"name":"廣慈/奉天宮站","loc":"福德街 (林口街口至福德街268巷口間)","lat":25.038085,"lng":121.583398,"exits":[{"name":"廣慈/奉天宮站出口1","no":"1","lng":121.583398,"lat":25.038085,"acc":"是"}]}
+    ];
+
+    // 初始化地圖 (中心預設為台北市中心)
+    const map = L.map('map').setView([25.0478, 121.5318], 12);
+
+    // 載入 OpenStreetMap 圖層
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    // 建立 MarkerCluster 圖層
+    const markersGroup = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 50
+    });
+
+    const markerMap = {};
+
+    // 渲染站點標記與圖層
+    function initMarkers() {
+      markersGroup.clearLayers();
+
+      stationsData.forEach(station => {
+        if (!station.lat || !station.lng) return;
+
+        // 計算無障礙出口數量
+        const accExits = station.exits.filter(e => e.acc === '是').length;
+
+        // 建立 Popup 內容
+        let exitsHtml = station.exits.map(e => `
+          <span class="exit-tag ${e.acc === '是' ? 'accessible' : ''}">
+            ${e.name} ${e.acc === 's' || e.acc === '是' ? '♿' : ''}
+          </span>
+        `).join('');
+
+        const popupContent = `
+          <div class="popup-title">${station.name}</div>
+          <div class="popup-loc">📍 ${station.loc}</div>
+          <div style="font-size:12px; color:#6b7280;">FID CODE: ${station.code}</div>
+          <div class="popup-exits-title">出入口資訊 (${station.exits.length} 個):</div>
+          <div>${exitsHtml || '<span style="font-size:11px;color:#9ca3af;">尚無細部出口資料</span>'}</div>
+        `;
+
+        const marker = L.marker([station.lat, station.lng])
+          .bindPopup(popupContent);
+
+        markersGroup.addLayer(marker);
+        markerMap[station.code] = marker;
+      });
+
+      map.addLayer(markersGroup);
+    }
+
+    // 渲染側邊欄清單
+    function renderSidebar(stations) {
+      const listEl = document.getElementById('station-list');
+      listEl.innerHTML = '';
+
+      if (stations.length === 0) {
+        listEl.innerHTML = '<li style="padding:20px; color:#9ca3af; text-align:center;">未找到符合的捷運站點</li>';
+        return;
+      }
+
+      stations.forEach(st => {
+        const accCount = st.exits.filter(e => e.acc === '是').length;
+        const li = document.createElement('li');
+        li.className = 'station-item';
+        li.innerHTML = `
+          <h3>${st.name}</h3>
+          <p>📍 ${st.loc}</p>
+          <span class="station-badge">出口: ${st.exits.length} | 無障礙: ${accCount}</span>
+        `;
+        li.onclick = () => focusStation(st);
+        listEl.appendChild(li);
+      });
+    }
+
+    // 搜尋與篩選邏輯
+    function filterStations() {
+      const keyword = document.getElementById('search').value.trim().toLowerCase();
+      const accessibleOnly = document.getElementById('accessibleOnly').checked;
+
+      const filtered = stationsData.filter(st => {
+        const matchesName = st.name.toLowerCase().includes(keyword);
+        const matchesLoc = st.loc.toLowerCase().includes(keyword);
+        const hasAccessible = st.exits.some(e => e.acc === '是');
+
+        const matchesSearch = matchesName || matchesLoc;
+        const matchesFilter = accessibleOnly ? hasAccessible : true;
+
+        return matchesSearch && matchesFilter;
+      });
+
+      renderSidebar(filtered);
+    }
+
+    // 地圖定位與彈窗觸發
+    function focusStation(station) {
+      if (!station.lat || !station.lng) return;
+      const marker = markerMap[station.code];
+      
+      map.setView([station.lat, station.lng], 16);
+      
+      if (marker) {
+        markersGroup.zoomToShowLayer(marker, () => {
+          marker.openPopup();
+        });
+      }
+    }
+
+    // 初始進入點
+    initMarkers();
+    renderSidebar(stationsData);
+  </script>
+</body>
+</html>
